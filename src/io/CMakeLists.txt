@@ -13,14 +13,19 @@
 #    You should have received a copy of the GNU Affero General Public License
 #    along with ThemeSrv.  If not, see <https://www.gnu.org/licenses/>.
 
+include_directories(${Boost_INCLUDE_DIR})
 include_directories(${STRING_THEORY_INCLUDE_DIRS})
 include_directories(${OPENSSL_INCLUDE_DIR})
 
 set(THEME_IO_HEADERS
+    poll.h
+    socket.h
     uru_crypt.h
 )
 
 set(THEME_IO_SOURCES
+    epoll.cpp
+    socket.cpp
     uru_crypt.cpp
 )
 

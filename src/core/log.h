@@ -34,7 +34,7 @@ namespace theme
 
     protected:
         ST::string m_name;
-        level m_level;
+        static level s_level;
 
         void write_line(level level, const char* msg);
         void write_line(level level, const ST::string& msg) { write_line(level, msg.c_str()); }
@@ -44,63 +44,75 @@ namespace theme
         log(const log&) = delete;
         log(log&&) = delete;
 
-        log(ST::string name, level level=level::e_info)
-            : m_name(std::move(name)), m_level(level)
-        { }
+        log(ST::string name)
+            : m_name(std::move(name))
+        {
+            tick();
+        }
 
+        template<size_t _Sz>
+        log(const char(&name)[_Sz])
+            : m_name(ST::string::from_literal(name, _Sz-1))
+        {
+            tick();
+        }
+
+    public:
         template<typename... _Args>
         void debug(const char* fmt, _Args&&... args)
         {
-            if (m_level <= level::e_debug)
-                write_line(level::e_debug, ST::format(fmt, std::forward<_Args...>(args)...));
+            if (s_level <= level::e_debug)
+                write_line(level::e_debug, ST::format(fmt, std::forward<_Args>(args)...));
         }
 
         void debug(const char* msg)
         {
-            if (m_level <= level::e_debug)
+            if (s_level <= level::e_debug)
                 write_line(level::e_debug, msg);
         }
 
         template<typename... _Args>
         void info(const char* fmt, _Args&&... args)
         {
-            if (m_level <= level::e_info)
-                write_line(level::e_info, ST::format(fmt, std::forward<_Args...>(args)...));
+            if (s_level <= level::e_info)
+                write_line(level::e_info, ST::format(fmt, std::forward<_Args>(args)...));
         }
 
         void info(const char* msg)
         {
-            if (m_level <= level::e_info)
+            if (s_level <= level::e_info)
                 write_line(level::e_info, msg);
         }
 
         template<typename... _Args>
         void warning(const char* fmt, _Args&&... args)
         {
-            if (m_level <= level::e_warning)
-                write_line(level::e_warning, ST::format(fmt, std::forward<_Args...>(args)...));
+            if (s_level <= level::e_warning)
+                write_line(level::e_warning, ST::format(fmt, std::forward<_Args>(args)...));
         }
 
         void warning(const char* msg)
         {
-            if (m_level <= level::e_warning)
+            if (s_level <= level::e_warning)
                 write_line(level::e_warning, msg);
         }
 
         template<typename... _Args>
         void error(const char* fmt, _Args&&... args)
         {
-            if (m_level <= level::e_error)
-                write_line(level::e_error, ST::format(fmt, std::forward<_Args...>(args)...));
+            if (s_level <= level::e_error)
+                write_line(level::e_error, ST::format(fmt, std::forward<_Args>(args)...));
         }
 
         void error(const char* msg)
         {
-            if (m_level <= level::e_error)
+            if (s_level <= level::e_error)
                 write_line(level::e_error, msg);
         }
 
     public:
+        static void set_level(level level) { s_level = level; }
+
         static void tick();
     };
 };

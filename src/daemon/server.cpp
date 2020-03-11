@@ -16,6 +16,9 @@
 
 #include "server.h"
 
+#include "../core/errors.h"
+#include "../io/poll.h"
+
 #include <fstream>
 #include <iostream>
 #include <string_theory/iostream>
@@ -55,9 +58,17 @@ theme::config_item s_daemonConfig[] = {
 // =================================================================================
 
 theme::server::server(const std::filesystem::path& config)
-    : m_config(s_daemonConfig)
+    : m_config(s_daemonConfig), m_log("LOBBY"), m_listenSock(), m_active(true)
 {
     m_config.read(config);
+
+    // dev
+    m_log.set_level(log::level::e_debug);
+}
+
+theme::server::~server()
+{
+    // needed due to incomplete types
 }
 
 // =================================================================================
@@ -87,11 +98,71 @@ void theme::server::generate_daemon_keys()
     m_config.set<const ST::string&>("gate", "crypt_k", std::get<0>(gate_keys));
     m_config.set<const ST::string&>("gate", "crypt_n", std::get<1>(gate_keys));
     m_config.set<const ST::string&>("gate", "crypt_x", std::get<2>(gate_keys));
+
+    // Slow op, retick log
+    log::tick();
 }
 
 // =================================================================================
 
-void theme::server::run()
+bool theme::server::run()
 {
-    // TODO
+    // Ensure we have encryption keys available - otherwise very, very bad things will
+    // happen when we try to use them.
+    check_crypto();
+
+    if (!init_fds())
+        return false;
+
+    // Run until we are nuked by a signal
+    do {
+        // todo: defeat slowloris
+        m_poll->dispatch();
+    } while(m_active);
+
+    return true;
+}
+
+void theme::server::check_crypto()
+{
+    if (!m_config.get<const ST::string&>("gate", "crypt_k").empty() &&
+        !m_config.get<const ST::string&>("gate", "crypt_k").empty())
+        return;
+
+    m_log.error("Encryption not configured! Connections to GateKeeper will fail!");
+    generate_daemon_keys();
+}
+
+bool theme::server::init_fds()
+{
+    m_log.debug("Initializing listen socket...");
+    if (!m_listenSock.bind(m_config.get<const char*>("lobby", "bindaddr"),
+                           m_config.get<unsigned int>("lobby", "port")))
+        return false;
+    if (!m_listenSock.listen())
+        return false;
+
+    m_poll = poll_dispatch::create();
+    THEME_ASSERTR(m_poll->add_fd(m_listenSock, poll_dispatch::e_read,
+                                 std::bind(&server::accept_cb, this,
+                                           std::placeholders::_1,
+                                           std::placeholders::_2)));
+
+    m_log.debug("Daemon FDs successfully initialized!");
+    return true;
+}
+
+void theme::server::accept_cb(int fd, uint32_t events)
+{
+    if (!(events & poll_dispatch::e_read)) {
+        m_log.warning("WTF?!?! got polled with nothing to accept?!");
+        return;
+    }
+
+    socket client;
+    if (m_listenSock.accept(client)) {
+        m_log.debug("incoming connection from {}", client.to_string());
+        // todo! for now, we'll just close() the socket when it goes out of scope...
+        client.shutdown();
+    }
 }

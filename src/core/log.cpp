@@ -23,6 +23,8 @@
 
 static char s_time[64]{};
 
+theme::log::level theme::log::s_level = theme::log::level::e_info;
+
 // =================================================================================
 
 void theme::log::write_line(theme::log::level level, const char* msg)

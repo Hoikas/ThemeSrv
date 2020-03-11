@@ -18,8 +18,11 @@
 #define __THEME_SERVER_H
 
 #include <filesystem>
+#include <memory>
 
 #include "../core/config_parser.h"
+#include "../core/log.h"
+#include "../io/socket.h"
 #include "../io/uru_crypt.h"
 
 namespace theme
@@ -28,6 +31,11 @@ namespace theme
     {
         config_parser m_config;
         crypto m_crypt;
+        log m_log;
+
+        socket m_listenSock;
+        std::unique_ptr<class poll_dispatch> m_poll;
+        bool m_active;
 
     public:
         server() = delete;
@@ -35,6 +43,7 @@ namespace theme
         server(server&&) = delete;
 
         server(const std::filesystem::path& config);
+        ~server();
 
     public:
         config_parser& config() { return m_config; }
@@ -45,7 +54,13 @@ namespace theme
         void generate_daemon_keys();
 
     public:
-        void run();
+        bool run();
+
+    protected:
+        void check_crypto();
+        bool init_fds();
+
+        void accept_cb(int fd, uint32_t events);
     };
 };
 

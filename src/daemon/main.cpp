@@ -48,7 +48,5 @@ int main(int argc, char* argv[])
         s_server->generate_client_ini(FLAGS_generate_client_ini);
     if (FLAGS_save_config)
         s_server->config().write(FLAGS_config_path);
-    s_server->run();
-
-    return 0;
+    return s_server->run() ? 0 : 1;
 }
