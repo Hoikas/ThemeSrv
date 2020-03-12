@@ -25,6 +25,13 @@ find_package(LibUUID REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(string_theory REQUIRED)
 
+# Compile time config
+include(TestBigEndian)
+TEST_BIG_ENDIAN(THEME_BIG_ENDIAN)
+
+include_directories("${PROJECT_BINARY_DIR}/include")
+configure_file("${PROJECT_SOURCE_DIR}/src/theme_config.h.in" "${PROJECT_BINARY_DIR}/include/theme_config.h")
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 

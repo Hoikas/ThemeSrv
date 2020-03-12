@@ -13,17 +13,18 @@
 #    You should have received a copy of the GNU Affero General Public License
 #    along with ThemeSrv.  If not, see <https://www.gnu.org/licenses/>.
 
-include_directories(${Boost_INCLUDE_DIR})
 include_directories(${STRING_THEORY_INCLUDE_DIRS})
 include_directories(${OPENSSL_INCLUDE_DIR})
 
 set(THEME_IO_HEADERS
+    client_base.h
     poll.h
     socket.h
     uru_crypt.h
 )
 
 set(THEME_IO_SOURCES
+    client_base.cpp
     epoll.cpp
     socket.cpp
     uru_crypt.cpp
@@ -32,3 +33,4 @@ set(THEME_IO_SOURCES
 add_library(theme_io STATIC ${THEME_IO_HEADERS} ${THEME_IO_SOURCES})
 target_link_libraries(theme_io OpenSSL::Crypto)
 target_link_libraries(theme_io ${STRING_THEORY_LIBRARIES})
+target_link_libraries(theme_io theme_core)

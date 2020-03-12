@@ -93,11 +93,11 @@ bool theme::socket::bind(const char* addr, uint16_t port)
 bool theme::socket::listen(int backlog)
 {
     if (::listen(m_fd, backlog) == -1) {
-        s_log.error("listen() failed on fd {}: {}", m_fd, strerror(errno));
+        s_log.error("{}: listen() failed on fd {}: {}", m_addr, m_fd, strerror(errno));
         return false;
     }
 
-    s_log.debug("fd {} listening...", m_fd);
+    s_log.debug("{}: fd {} listening...", m_addr, m_fd);
     return true;
 }
 
@@ -107,14 +107,11 @@ bool theme::socket::accept(theme::socket& client)
     socklen_t len = sizeof(addr);
     int result = ::accept4(m_fd, (sockaddr*)&addr, &len, SOCK_NONBLOCK);
 
-    if (result == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            s_log.debug("accept() would block--you must be having a bad day to code that...");
-            return false;
-        } else {
-            s_log.warning("accept() failed on fd {}: {}", m_fd, strerror(errno));
-            return false;
-        }
+    if (result == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        return false;
+    } else if (result == -1) {
+        s_log.warning("{}: accept() failed on fd {}: {}", m_addr, m_fd, strerror(errno));
+        return false;
     }
 
     client.setfd(result, (sockaddr*)&addr);
@@ -124,10 +121,25 @@ bool theme::socket::accept(theme::socket& client)
 bool theme::socket::shutdown()
 {
     if (::shutdown(m_fd, SHUT_RDWR) == -1) {
-        s_log.warning("shutdown() failed on fd {}: {}", m_fd, strerror(errno));
+        s_log.warning("{}: shutdown() failed on fd {}: {}", m_addr, m_fd, strerror(errno));
         return false;
     }
     return true;
+}
+
+bool theme::socket::read(size_t bufsz, void* buf, ssize_t& nread)
+{
+    nread = ::recv(m_fd, buf, bufsz, MSG_DONTWAIT);
+    if (nread == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        nread = 0;
+        return false;
+    } else if (nread == -1) {
+        s_log.warning("{}: recv failed on fd {}: {}", m_addr, m_fd, strerror(errno));
+        nread = (size_t)-1;
+        return false;
+    } else {
+        return bufsz == nread;
+    }
 }
 
 // =================================================================================

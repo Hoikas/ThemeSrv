@@ -53,6 +53,7 @@ namespace theme
         bool listen(int backlog=10);
         bool accept(socket& client);
         bool shutdown();
+        bool read(size_t bufsz, void* buf, ssize_t& nread);
 
         void setfd(int fd);
         void setfd(int fd, sockaddr* addr);

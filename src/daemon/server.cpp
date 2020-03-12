@@ -15,6 +15,7 @@
  */
 
 #include "server.h"
+#include "client.h"
 
 #include "../core/errors.h"
 #include "../io/poll.h"
@@ -159,10 +160,12 @@ void theme::server::accept_cb(int fd, uint32_t events)
         return;
     }
 
-    socket client;
-    if (m_listenSock.accept(client)) {
-        m_log.debug("incoming connection from {}", client.to_string());
-        // todo! for now, we'll just close() the socket when it goes out of scope...
-        client.shutdown();
+    socket sock;
+    while (m_listenSock.accept(sock)) {
+        m_log.debug("incoming connection from {}", sock.to_string());
+        auto& client = m_clients.emplace_back(std::move(sock), this);
+        client.m_iterator = m_clients.end();
+        // WTF?! No operator-, only operator--
+        --client.m_iterator;
     }
 }

@@ -13,9 +13,29 @@
 #    You should have received a copy of the GNU Affero General Public License
 #    along with ThemeSrv.  If not, see <https://www.gnu.org/licenses/>.
 
-add_subdirectory(buildinfo)
-add_subdirectory(core)
-add_subdirectory(protocol)
-add_subdirectory(io)
+set(THEME_PROTOCOL_HEADERS
+    common.h
+    net_struct.h
+)
 
-add_subdirectory(daemon)
+set(THEME_PROTOCOL_INLINES
+    protocol_fields_begin.inl
+    protocol_fields_end.inl
+    protocol_objects_begin.inl
+    protocol_objects_end.inl
+    protocol_structs_begin.inl
+    protocol_structs_end.inl
+)
+
+set(THEME_PROTOCOL_PROTOCOLS
+    common.inl
+)
+
+set(THEME_PROTOCOL_SOURCES
+    net_struct.cpp
+    protocol.cpp
+)
+
+add_library(theme_protocol STATIC ${THEME_PROTOCOL_HEADERS} ${THEME_PROTOCOL_INLINES}
+                                  ${THEME_PROTOCOL_PROTOCOLS} ${THEME_PROTOCOL_SOURCES})
+target_link_libraries(theme_protocol theme_io)

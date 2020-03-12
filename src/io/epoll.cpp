@@ -167,19 +167,20 @@ bool theme::epoll_dispatch::dispatch(int timeout)
         // Anyway, go ahead and do this BEFORE the callback so the callback doesn't do something
         // stupid like lookup the callback in the map.
         if (events_mask & events::e_hup) {
-            if (epoll_ctl(m_fd, EPOLL_CTL_DEL, event.data.fd, nullptr) == -1) {
-                s_log.warning("dispatch() failed to remove HUP'd fd {}: {}", event.data.fd,
+            if (epoll_ctl(m_fd, EPOLL_CTL_DEL, cb->m_iterator->first, nullptr) == -1) {
+                s_log.warning("dispatch() failed to remove HUP'd fd {}: {}", cb->m_iterator->first,
                               strerror(errno));
             }
         }
 
         if (cb->m_cb)
-            cb->m_cb(event.data.fd, events_mask);
+            cb->m_cb(cb->m_iterator->first, events_mask);
 
         // Performance optimization: we already have the iterator, so we can constant-time
         // delete from the cb map here. Beware this will trigger the deletion of the callback
         // object, so don't use it anymore.
-        m_callbacks.erase(cb->m_iterator);
+        if ((events_mask & events::e_hup))
+            m_callbacks.erase(cb->m_iterator);
     }
 
     return true;

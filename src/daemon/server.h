@@ -18,6 +18,7 @@
 #define __THEME_SERVER_H
 
 #include <filesystem>
+#include <list>
 #include <memory>
 
 #include "../core/config_parser.h"
@@ -35,6 +36,7 @@ namespace theme
 
         socket m_listenSock;
         std::unique_ptr<class poll_dispatch> m_poll;
+        std::list<class client> m_clients;
         bool m_active;
 
     public:
@@ -46,8 +48,14 @@ namespace theme
         ~server();
 
     public:
+        std::list<client>& clients() { return m_clients; }
+        const std::list<client>& clients() const { return m_clients; }
+
         config_parser& config() { return m_config; }
         const config_parser& config() const { return m_config; }
+
+        poll_dispatch* poll() { return m_poll.get(); }
+        const poll_dispatch* poll() const { return m_poll.get(); }
 
     public:
         void generate_client_ini(const std::filesystem::path& path) const;

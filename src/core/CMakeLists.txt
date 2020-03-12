@@ -19,6 +19,7 @@ include_directories(${LibUUID_INCLUDE_DIR})
 set(THEME_CORE_HEADERS
     build_info.h
     config_parser.h
+    endian.h
     errors.h
     log.h
     uuid.h

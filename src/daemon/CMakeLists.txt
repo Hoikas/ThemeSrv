@@ -17,10 +17,12 @@ include_directories(${GFLAGS_INCLUDE_DIRS})
 include_directories(${STRING_THEORY_INCLUDE_DIRS})
 
 set(THEME_DAEMON_HEADERS
+    client.h
     server.h
 )
 
 set(THEME_DAEMON_SOURCES
+    client_common.cpp
     main.cpp
     server.cpp
 )
@@ -29,3 +31,4 @@ add_executable(theme_daemon ${THEME_DAEMON_HEADERS} ${THEME_DAEMON_SOURCES})
 target_link_libraries(theme_daemon ${GFLAGS_LIBRARIES})
 target_link_libraries(theme_daemon theme_core)
 target_link_libraries(theme_daemon theme_io)
+target_link_libraries(theme_daemon theme_protocol)
