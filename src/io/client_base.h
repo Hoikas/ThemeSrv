@@ -170,7 +170,12 @@ namespace theme
         template<typename T>
         void write(const T* const msg)
         {
-            enqueue_write(T::net_struct, (const uint8_t* const)msg);
+            write(T::net_struct, (const uint8_t* const)msg);
+        }
+
+        void write(const net_struct* const ns, const uint8_t* const buf)
+        {
+            enqueue_write(ns, buf);
         }
 
         void set_crypt_key(size_t keysz, const uint8_t* const key);

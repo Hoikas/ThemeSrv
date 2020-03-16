@@ -18,7 +18,6 @@
 #define __THEME_CLIENT_H
 
 #include "../core/endian.h"
-#include "../core/log.h" // :(
 #include "../io/client_base.h"
 #include "../protocol/net_struct.h" // :(
 
@@ -59,8 +58,8 @@ namespace theme
             /** Encryption is pending the receipt of the client's seed. */
             e_wantClientSeed = (1<<2),
 
-            /** The client is peeking for a message type from the client. */
-            e_peekMsgType = (1<<3),
+            /** Waiting for a message header from the client. */
+            e_wantMsgHeader = (1<<3),
         };
 
         uint32_t& flags() { return m_flags; }
@@ -114,6 +113,9 @@ namespace theme
         virtual ~encrypted_handler() = default;
 
         virtual std::tuple<BIGNUM*, BIGNUM*> get_keys(client& cli) = 0;
+
+        /** Encryption has been successfully negotiated. */
+        virtual bool handle_encryption(client& cli, socket& sock) = 0;
 
         bool read(client& cli, socket& sock, std::unique_ptr<uint8_t[]>& buf);
     };

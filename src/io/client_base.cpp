@@ -111,7 +111,7 @@ std::tuple<bool, size_t, size_t> theme::client_base::calc_field_sz(const theme::
         alloc += cur_field.m_elementsz * cur_field.m_count;
         if (buf) {
             const net_field& sz_field = ns->m_fields[field - 1];
-            wire += cur_field.m_elementsz * extract_elementcount(sz_field, cur_field, buf);
+            wire = cur_field.m_elementsz * extract_elementcount(sz_field, cur_field, buf);
         } else {
             // Don't increment the wire size -- we don't know the size of this field, so it's
             // better for the IO operation to complete and then for us to "double check" to
@@ -122,8 +122,8 @@ std::tuple<bool, size_t, size_t> theme::client_base::calc_field_sz(const theme::
         }
         break;
     default:
-        alloc += cur_field.m_elementsz * cur_field.m_count;
-        wire += cur_field.m_elementsz * cur_field.m_count;
+        alloc = cur_field.m_elementsz * cur_field.m_count;
+        wire = cur_field.m_elementsz * cur_field.m_count;
         break;
     }
 
@@ -383,7 +383,7 @@ void theme::client_base::enqueue_write(const theme::net_struct* const ns, const 
     // So, we'll instead perform userspace buffering here. At least the code is cleaner...
     size_t wiresz = 0;
     for (size_t i = 0; i < ns->m_size; ++i) {
-        auto result = calc_field_sz(ns, i, buf);
+        auto result = calc_field_sz(ns, i, buf + wiresz);
         THEME_ASSERTD(std::get<0>(result));
         wiresz += std::get<2>(result);
     }
@@ -400,7 +400,7 @@ void theme::client_base::enqueue_write(const theme::net_struct* const ns, const 
     const uint8_t* mem_ptr = buf;
     uint8_t* wire_ptr = state.m_buf.get();
     for (size_t i = 0; i < ns->m_size; ++i) {
-        auto result = calc_field_sz(ns, i, buf);
+        auto result = calc_field_sz(ns, i, mem_ptr);
         THEME_ASSERTD(std::get<0>(result));
 
         int encsz;

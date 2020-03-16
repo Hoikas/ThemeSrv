@@ -75,8 +75,10 @@
     std::u16string_view get_##name() const { return std::u16string_view(m_##name, m_##name##sz); } \
     void set_##name(const std::u16string_view& value) \
     { \
-        m_##name##sz = (uint16_t)std::min((size_t)szval, value.size()); \
-        memcpy(m_##name, value.data(), m_##name##sz * sizeof(char16_t)); \
+        auto size = std::min((size_t)szval, value.size()); \
+        value.copy(m_##name, size); \
+        m_##name[std::min((size_t)szval-1, value.size())] = 0; \
+        m_##name##sz = THEME_LE16(size); \
     }
 
 #define THEME_NET_FIELD_UUID(name) \

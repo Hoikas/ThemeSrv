@@ -190,7 +190,7 @@ bool theme::encrypted_handler::handle_ydata(theme::client& cli, theme::socket& s
     cli.write(&reply);
     cli.set_crypt_key(sizeof(key), key);
     cli.flags() |= client::e_encrypted;
-    return true;
+    return handle_encryption(cli, sock);
 }
 
 bool theme::encrypted_handler::read(theme::client& cli, theme::socket& sock,

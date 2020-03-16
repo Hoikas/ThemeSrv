@@ -17,8 +17,6 @@
 #ifndef __THEME_GATEKEEPER
 #define __THEME_GATEKEEPER
 
-#include "client.h"
-
 #include <openssl/ossl_typ.h>
 #include <string>
 #include <tuple>
@@ -33,8 +31,6 @@ namespace theme
         BIGNUM* m_cryptK;
         BIGNUM* m_cryptN;
 
-        bool copy_string(const std::u16string& src, size_t destsz, char16_t* dest) const;
-
     public:
         gatekeeper_daemon() = delete;
         gatekeeper_daemon(const gatekeeper_daemon&) = delete;
@@ -43,16 +39,14 @@ namespace theme
         ~gatekeeper_daemon();
 
     public:
-        template<size_t _Sz>
-        bool get_authsrv_address(char16_t(&dest)[_Sz]) const
+        std::u16string_view get_authsrv_address() const
         {
-            return copy_string(m_authsrv, _Sz, dest);
+            return m_authsrv;
         }
 
-        template<size_t _Sz>
-        bool get_filesrv_address(char16_t(&dest)[_Sz]) const
+        std::u16string_view get_filesrv_address() const
         {
-            return copy_string(m_filesrv, _Sz, dest);
+            return m_filesrv;
         }
 
         std::tuple<BIGNUM*, BIGNUM*> get_keys() const

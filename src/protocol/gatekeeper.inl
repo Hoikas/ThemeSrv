@@ -16,8 +16,8 @@
 
 THEME_NET_STRUCT_BEGIN(gatekeeper, pingRequest)
     THEME_NET_FIELD_UINT16(type)
-    THEME_NET_FIELD_UINT32(transId)
     THEME_NET_FIELD_UINT32(pingTime)
+    THEME_NET_FIELD_UINT32(transId)
     THEME_NET_FIELD_BUFFER(payload)
 THEME_NET_STRUCT_END(gatekeeper, pingRequest)
 
@@ -36,8 +36,8 @@ THEME_NET_STRUCT_END(gatekeeper, authSrvRequest)
 
 THEME_NET_STRUCT_BEGIN(gatekeeper, pingReply)
     THEME_NET_FIELD_UINT16(type)
-    THEME_NET_FIELD_UINT32(transId)
     THEME_NET_FIELD_UINT32(pingTime)
+    THEME_NET_FIELD_UINT32(transId)
     THEME_NET_FIELD_BUFFER(payload)
 THEME_NET_STRUCT_END(gatekeeper, pingReply)
 

@@ -15,6 +15,8 @@
  */
 
 #include "gatekeeper.h"
+
+#include "client.h"
 #include "server.h"
 
 #include <openssl/bn.h>
@@ -51,19 +53,6 @@ theme::gatekeeper_daemon::~gatekeeper_daemon()
     BN_free(m_cryptN);
 }
 
-bool theme::gatekeeper_daemon::copy_string(const std::u16string& src, size_t destsz, char16_t* dest) const
-{
-    if (src.size() <= destsz) {
-        src.copy(dest, destsz);
-        dest[destsz-1] = 0;
-        return false;
-    } else {
-        src.copy(dest, src.size());
-        dest[src.size()] = 0;
-        return true;
-    }
-}
-
 // =================================================================================
 
 namespace theme
@@ -72,6 +61,14 @@ namespace theme
     {
     protected:
         std::tuple<BIGNUM*, BIGNUM*> get_keys(client& cli) override;
+
+        bool handle_ping(client& cli, socket& sock, protocol::gatekeeper_pingRequest* req);
+        bool handle_fileSrvReq(client& cli, socket& sock, protocol::gatekeeper_fileSrvRequest* req);
+        bool handle_authSrvReq(client& cli, socket& sock, protocol::gatekeeper_authSrvRequest* req);
+
+        bool handle_encryption(client& cli, socket& sock) override;
+        bool dispatch_msg(client& cli, socket& sock, std::unique_ptr<uint8_t[]>& buf);
+        bool read_msg(client& cli, socket& sock, std::unique_ptr<uint8_t[]>& buf);
 
     public:
         gatekeeper_server(client& cli)
@@ -92,22 +89,108 @@ std::tuple<BIGNUM*, BIGNUM*> theme::gatekeeper_server::get_keys(theme::client& c
 
 // =================================================================================
 
+bool theme::gatekeeper_server::handle_ping(theme::client& cli, theme::socket& sock,
+                                           theme::protocol::gatekeeper_pingRequest* req)
+{
+    // Response is simply a bitwise copy--no need for any additional processing.
+    cli.write<protocol::gatekeeper_pingReply>((protocol::gatekeeper_pingReply*)req);
+    return true;
+}
+
+bool theme::gatekeeper_server::handle_fileSrvReq(theme::client& cli, theme::socket& sock,
+                                                 theme::protocol::gatekeeper_fileSrvRequest* req)
+{
+    protocol::gatekeeper_fileSrvReply reply;
+    reply.set_type(reply.id());
+    reply.set_transId(req->get_transId());
+    reply.set_address(cli.server()->gatekeeper()->get_filesrv_address());
+    cli.write(&reply);
+    return true;
+}
+
+bool theme::gatekeeper_server::handle_authSrvReq(theme::client& cli, theme::socket& sock,
+                                                 theme::protocol::gatekeeper_authSrvRequest* req)
+{
+    protocol::gatekeeper_fileSrvReply reply;
+    reply.set_type(reply.id());
+    reply.set_transId(req->get_transId());
+    reply.set_address(cli.server()->gatekeeper()->get_authsrv_address());
+    cli.write(&reply);
+    return true;
+}
+
+// =================================================================================
+
+bool theme::gatekeeper_server::handle_encryption(theme::client& cli, theme::socket& sock)
+{
+    // Begin reading encrypted messages from the client.
+    cli.flags() |= client::e_wantMsgHeader;
+    cli.read<protocol::common_msg_std_header>();
+    return true;
+}
+
+bool theme::gatekeeper_server::dispatch_msg(theme::client& cli, theme::socket& sock,
+                                            std::unique_ptr<uint8_t[]>& buf)
+{
+    auto header = (const protocol::common_msg_std_header*)buf.get();
+    switch (header->get_type()) {
+    case protocol::gatekeeper::e_pingRequest:
+        return handle_ping(cli, sock, (protocol::gatekeeper_pingRequest*)buf.get());
+    case protocol::gatekeeper::e_fileSrvRequest:
+        return handle_fileSrvReq(cli, sock, (protocol::gatekeeper_fileSrvRequest*)buf.get());
+    case protocol::gatekeeper::e_authSrvRequest:
+        return handle_authSrvReq(cli, sock, (protocol::gatekeeper_authSrvRequest*)buf.get());
+    default:
+        cli.logger().warning("{}: dispatch_msg() no dispatcher for {x}", sock.to_string(),
+                             header->get_type());
+        return false;
+    }
+}
+
+bool theme::gatekeeper_server::read_msg(theme::client& cli, theme::socket& sock,
+                                        std::unique_ptr<uint8_t[]>& buf)
+{
+    const net_struct* ns;
+    auto header = (const protocol::common_msg_std_header*)buf.get();
+
+    switch (header->get_type()) {
+    case protocol::gatekeeper::e_pingRequest:
+        ns = protocol::gatekeeper_pingRequest::net_struct;
+        break;
+    case protocol::gatekeeper::e_fileSrvRequest:
+        ns = protocol::gatekeeper_fileSrvRequest::net_struct;
+        break;
+    case protocol::gatekeeper::e_authSrvRequest:
+        ns = protocol::gatekeeper_authSrvRequest::net_struct;
+        break;
+    default:
+        cli.logger().warning("{}: read_msg() sent unknown message {x}", sock.to_string(),
+                             header->get_type());
+        return false;
+    }
+
+    // Keep the same buffer as before but advance beyond the type field
+    cli.read(ns, 1, buf);
+    return true;
+}
+
 bool theme::gatekeeper_server::read(theme::client& cli, theme::socket& sock,
                                     std::unique_ptr<uint8_t[]>& buf)
 {
     // The base classes take care of establishing encryption and reading complete messages
     // from the client off the wire ^_^
-    if (!(cli.flags() & client::e_encrypted)) {
-        // FIXME: temporarily receive the first message's header to verify encryption.
-        // When the dispatcher is written, this should simply return the encrypted handler's result.
-        if (encrypted_handler::read(cli, sock, buf)) {
-            if (cli.flags() & client::e_encrypted)
-                cli.read<protocol::common_msg_std_header>();
-            return true;
-        }
-    }
+    if (!(cli.flags() & client::e_encrypted))
+        return encrypted_handler::read(cli, sock, buf);
 
-    return false;
+    if (cli.flags() & client::e_wantMsgHeader) {
+        cli.flags() &= ~client::e_wantMsgHeader;
+        return read_msg(cli, sock, buf);
+    } else {
+        cli.flags() |= client::e_wantMsgHeader;
+        // this is safe because the read is just a state change
+        cli.read<protocol::common_msg_std_header>();
+        return dispatch_msg(cli, sock, buf);
+    }
 }
 
 void theme::gatekeeper_server::hup(theme::client& cli, theme::socket& sock)
