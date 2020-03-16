@@ -23,6 +23,7 @@
 #include <netdb.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 // =================================================================================
@@ -127,18 +128,29 @@ bool theme::socket::shutdown()
     return true;
 }
 
-bool theme::socket::read(size_t bufsz, void* buf, ssize_t& nread)
+std::tuple<bool, size_t> theme::socket::read(size_t bufsz, uint8_t* const buf)
 {
-    nread = ::recv(m_fd, buf, bufsz, MSG_DONTWAIT);
+    ssize_t nread = ::read(m_fd, buf, bufsz);
     if (nread == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        nread = 0;
-        return false;
+        return std::make_tuple(false, 0);
     } else if (nread == -1) {
-        s_log.warning("{}: recv failed on fd {}: {}", m_addr, m_fd, strerror(errno));
-        nread = (size_t)-1;
-        return false;
+        s_log.warning("{}: read failed on fd {}: {}", m_addr, m_fd, strerror(errno));
+        return std::make_tuple(false, -1);
     } else {
-        return bufsz == nread;
+        return std::make_tuple(true, (size_t)nread);
+    }
+}
+
+std::tuple<bool, size_t> theme::socket::write(size_t bufsz, const uint8_t* const buf)
+{
+    ssize_t nwrite = ::write(m_fd, buf, bufsz);
+    if (nwrite == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        return std::make_tuple(false, 0);
+    } else if (nwrite == -1) {
+        s_log.warning("{}: write failed on fd {}: {}", m_addr, m_fd, strerror(errno));
+        return std::make_tuple(false, -1);
+    } else {
+        return std::make_tuple(true, (size_t)nwrite);
     }
 }
 

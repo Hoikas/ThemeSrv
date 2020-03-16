@@ -16,8 +16,10 @@
 
 // Include all protocol headers here
 #include "common.h"
+#include "gatekeeper.h"
 
 // Reinclude all of the protocol inlines to define objects
 #include "protocol_objects_begin.inl"
 #include "common.inl"
+#include "gatekeeper.inl"
 #include "protocol_objects_end.inl"

@@ -19,6 +19,13 @@
 
 #include "socket.h"
 
+#include <list>
+#include <openssl/ossl_typ.h>
+#include <memory>
+#include <tuple>
+
+typedef std::unique_ptr<EVP_CIPHER_CTX, void(*)(EVP_CIPHER_CTX*)> evp_ptr_t;
+
 namespace theme
 {
     class log;
@@ -32,58 +39,141 @@ namespace theme
         static log s_log;
 
     private:
-        struct io_state
+        class io_state
         {
-            const net_struct* m_struct{};
-            size_t m_field{};
-            size_t m_defer{};
-            size_t m_bufoffs{};
-            size_t m_bufsz{};
-            uint8_t* m_buf{};
+        public:
+            union
+            {
+                struct
+                {
+                    const net_struct* m_struct;
+                    size_t m_field;
+                    size_t m_offset;
+                } m_read;
+                struct
+                {
+                    size_t m_bufoffs;
+                    size_t m_fdoffs;
+                    int m_fd;
+                } m_write;
+                uint8_t m_unionbuf[std::max(sizeof(m_read), sizeof(m_write))];
+            };
+            size_t m_bufsz;
+            std::unique_ptr<uint8_t[]> m_buf;
+
+            io_state()
+                : m_unionbuf(), m_bufsz()
+            { }
+            io_state(const io_state&) = delete;
+            io_state(io_state&& move)
+                : m_bufsz(move.m_bufsz), m_buf(std::move(move.m_buf))
+            {
+                memcpy(m_unionbuf, move.m_unionbuf, sizeof(m_unionbuf));
+                memset(move.m_unionbuf, 0, sizeof(m_unionbuf));
+                move.m_bufsz = 0;
+            }
         };
 
         io_state m_read;
-        io_state m_write;
+        std::list<io_state> m_writes;
+
+        evp_ptr_t m_encrypt;
+        evp_ptr_t m_decrypt;
 
     private:
-        ssize_t calc_offset(const net_struct* netstruct, size_t field, const uint8_t* buf, bool write=false) const;
-        ssize_t extract_elementcount(const net_field& sz_field, const net_field& buf_field, const uint8_t* buf) const;
-        size_t extract_integer(const net_field& field, const uint8_t* buf) const;
-        bool resize_buf(size_t& currentsz, size_t desiredsz, uint8_t*& buf);
-        void debug_field(const net_field& field, const uint8_t* buf) const;
+        bool alloc_buf(io_state& state, size_t requestsz, bool exact=false);
 
-    protected:
-        /** Handles incoming data on the socket.
-         *  Returns boolean whether a completed message is available for processing.
+        /**
+        * Calculates the size of a net field.
+        * Some fields are resized from their memory representation on the wire. This will allow
+        * you to determine the size of a field in memory and on the wire. Note that determining
+        * the wire size will require the examination of the message in memory.
+        * \param buf Pointer to the field in the decrypted memory variant of the struct.
+        * \return Returns a tuple of:
+        *         - is the size fixed (false for buffers/strings/fds)
+        *         - field size in memory (to allocate)
+        *         - field size on wire (to read/write)
+        */
+        std::tuple<bool, size_t, size_t> calc_field_sz(const net_struct* const ns,
+                                                       size_t field,
+                                                       const uint8_t* const buf=nullptr) const;
+
+        /**
+         * Prints the contents of a field to the log.
+         * \note buf is a memory style buffer, not wire-style.
          */
-        bool handle_read();
-        const uint8_t* get_readbuf() const { return m_read.m_buf; }
-        bool has_pending_read() const { return m_read.m_struct != nullptr; }
+        void debug_field(const net_field& field, const uint8_t* const buf) const;
 
-        void handle_write();
-        const uint8_t* get_writebuf() const { return m_write.m_buf; }
-        bool has_pending_write() const { return m_write.m_struct != nullptr; }
+        /**
+         * Extracts the number of elements in a wire buffer field.
+         * \param buf Pointer to the buffer field in the memory representation of the message.
+         */
+        size_t extract_elementcount(const net_field& sz_field, const net_field& buf_field,
+                                     const uint8_t* const buf) const;
+        size_t extract_integer(const net_field& field, const uint8_t* const buf) const;
+
+    private:
+        bool resume_read(io_state& state);
+        bool resume_write(io_state& state);
+
+        void enqueue_write(const net_struct* const ns, const uint8_t* const buf);
 
     protected:
-        client_base(socket&& sock)
-            : m_socket(std::move(sock))
-        { }
+        /**
+         * Handles incoming data on the socket.
+         * \return Returns a smart pointer to a completely read message. If no complete message was
+         *         read, the smart pointer is empty.
+         */
+        std::unique_ptr<uint8_t[]> handle_read();
+        bool has_pending_read() const { return m_read.m_read.m_struct != nullptr; }
+
+        bool handle_write();
+        bool has_pending_write() const { return !m_writes.empty(); }
+
+    protected:
+        client_base(socket& sock);
 
     public:
         client_base(const client_base&) = delete;
         client_base(client_base&&) = delete;
-        ~client_base();
+        virtual ~client_base() = default;
 
     public:
         log& logger() { return s_log; }
 
         template<typename T>
-        void read(size_t field=-1)
+        void read()
         {
-            m_read.m_struct = T::net_struct;
-            if (field != (size_t)-1)
-                m_read.m_field = field;
+            read(T::net_struct);
         }
+
+        void read(const net_struct* const ns)
+        {
+            m_read.m_read.m_struct = ns;
+        }
+
+        template<typename T>
+        void read(size_t field, std::unique_ptr<uint8_t[]>& buf)
+        {
+            read(T::net_struct, field, buf);
+        }
+
+        void read(const net_struct* const ns, size_t field, std::unique_ptr<uint8_t[]>& buf)
+        {
+            m_read.m_read.m_struct = ns;
+            if (field != (size_t)-1)
+                m_read.m_read.m_field = field;
+            if (buf)
+                m_read.m_buf = std::move(buf);
+        }
+
+        template<typename T>
+        void write(const T* const msg)
+        {
+            enqueue_write(T::net_struct, (const uint8_t* const)msg);
+        }
+
+        void set_crypt_key(size_t keysz, const uint8_t* const key);
     };
 };
 

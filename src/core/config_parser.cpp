@@ -83,6 +83,15 @@ const ST::string& theme::config_parser::get<const ST::string&>(const ST::string&
 }
 
 template<>
+std::u16string theme::config_parser::get<std::u16string>(const ST::string& section, const ST::string& key) const
+{
+    auto item_it = find_item(section, key);
+    THEME_ASSERTD(item_it->second.m_def->m_type == config_item::value_type::e_string);
+    ST::utf16_buffer buf = item_it->second.m_value.to_utf16();
+    return std::u16string(buf.begin(), buf.end());
+}
+
+template<>
 unsigned int theme::config_parser::get<unsigned int>(const ST::string& section, const ST::string& key) const
 {
     auto item_it = find_item(section, key);

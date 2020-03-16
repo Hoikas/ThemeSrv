@@ -18,11 +18,13 @@ include_directories(${STRING_THEORY_INCLUDE_DIRS})
 
 set(THEME_DAEMON_HEADERS
     client.h
+    gatekeeper.h
     server.h
 )
 
 set(THEME_DAEMON_SOURCES
     client_common.cpp
+    gatekeeper.cpp
     main.cpp
     server.cpp
 )

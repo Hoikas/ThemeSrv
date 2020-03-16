@@ -28,16 +28,22 @@
 
 namespace theme
 {
+    class client;
+    class gatekeeper_daemon;
+    class poll_dispatch;
+
     class server
     {
         config_parser m_config;
-        crypto m_crypt;
+        ::theme::crypto m_crypt;
         log m_log;
 
         socket m_listenSock;
-        std::unique_ptr<class poll_dispatch> m_poll;
-        std::list<class client> m_clients;
+        std::unique_ptr<poll_dispatch> m_poll;
+        std::list<client> m_clients;
         bool m_active;
+
+        std::unique_ptr<gatekeeper_daemon> m_gatekeeperSrv;
 
     public:
         server() = delete;
@@ -53,6 +59,11 @@ namespace theme
 
         config_parser& config() { return m_config; }
         const config_parser& config() const { return m_config; }
+
+        ::theme::crypto& cypto() { return m_crypt; }
+        const ::theme::crypto& crypto() const { return m_crypt; }
+
+        gatekeeper_daemon* gatekeeper() const { return m_gatekeeperSrv.get(); }
 
         poll_dispatch* poll() { return m_poll.get(); }
         const poll_dispatch* poll() const { return m_poll.get(); }

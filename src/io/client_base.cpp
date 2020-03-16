@@ -15,77 +15,132 @@
  */
 
 #include "client_base.h"
+#include "theme_config.h"
 
 #include "../core/errors.h"
 #include "../core/log.h"
 #include "../protocol/common.h"
 
-#include <iostream>
-#include <sys/socket.h>
+#include <openssl/evp.h>
 #include <sys/types.h>
 
- // =================================================================================
-
- // Uncomment to print out extremely verbose protocol schtuff
- //#define CLIENT_PROTOCOL_DEBUG
+// =================================================================================
 
 theme::log theme::client_base::s_log{"CLIENT"};
 
 // Die if the client tries to send more than this many elements in a buffer.
-size_t constexpr kMaxBufCount = 1024;
+constexpr size_t kMaxBufCount = 1024;
+
+// Maximum buffer size we can allocate on the stack
+constexpr size_t kMaxStackBufSize = 2048;
 
 // =================================================================================
 
-theme::client_base::~client_base()
+theme::client_base::client_base(theme::socket& sock)
+    : m_socket(std::move(sock)),
+      m_encrypt({ EVP_CIPHER_CTX_new(), EVP_CIPHER_CTX_free }),
+      m_decrypt({ EVP_CIPHER_CTX_new(), EVP_CIPHER_CTX_free })
 {
-    if (m_read.m_buf)
-        free(m_read.m_buf);
-    if (m_write.m_buf)
-        free(m_write.m_buf);
+    EVP_EncryptInit_ex(m_encrypt.get(), EVP_enc_null(), nullptr, nullptr, nullptr);
+    EVP_DecryptInit_ex(m_decrypt.get(), EVP_enc_null(), nullptr, nullptr, nullptr);
+}
+
+void theme::client_base::set_crypt_key(size_t keysz, const uint8_t* const key)
+{
+    s_log.debug("{}: changing encryption ({} bits)", m_socket.to_string(), keysz * 8);
+
+    auto cipher = EVP_rc4();
+    auto initproc = EVP_CIPHER_meth_get_init(cipher);
+
+    EVP_CIPHER_CTX_reset(m_encrypt.get());
+    THEME_ASSERTD(EVP_EncryptInit_ex(m_encrypt.get(), cipher, nullptr, nullptr, nullptr) == 1);
+    EVP_CIPHER_CTX_set_key_length(m_encrypt.get(), keysz);
+    THEME_ASSERTD(initproc(m_encrypt.get(), key, nullptr, 1) == 1);
+
+    EVP_CIPHER_CTX_reset(m_decrypt.get());
+    THEME_ASSERTD(EVP_DecryptInit_ex(m_decrypt.get(), cipher, nullptr, nullptr, nullptr) == 1);
+    EVP_CIPHER_CTX_set_key_length(m_decrypt.get(), keysz);
+    THEME_ASSERTD(initproc(m_decrypt.get(), key, nullptr, 0) == 1);
 }
 
 // =================================================================================
 
-ssize_t theme::client_base::calc_offset(const net_struct* netstruct, size_t field,
-                                        const uint8_t* buf, bool write) const
+bool theme::client_base::alloc_buf(theme::client_base::io_state& state, size_t requestsz, bool exact)
 {
-    size_t offset = 0;
-    for (size_t i = 0; i < field;) {
-        const net_field& cur = netstruct->m_fields[i];
-
-        if (cur.m_type == net_field::data_type::e_buffer_size && buf) {
-            // OK, this is the size field for a variable field immediately following this field
-            // whew. so, we need to actually examine the working buffer to figure this out.
-            // To make life more fun, strings do this too, so we need to fall back gracefully.
-            THEME_ASSERTD(cur.m_count == 1);
-
-            ssize_t elementcount;
-            const net_field& buf_field = netstruct->m_fields[i+1];
-            if (write && buf_field.m_count != -1) {
-                elementcount += buf_field.m_count;
-            } else {
-                const uint8_t* ptr = buf + offset;
-                elementcount = extract_elementcount(cur, buf_field, buf);
-                if (elementcount == -1)
-                    return -1;
-            }
-
-            offset += cur.m_elementsz;
-            offset += elementcount * buf_field.m_elementsz;
-            i += 2;
-        } else {
-            offset += cur.m_count * cur.m_elementsz;
-            ++i;
-        }
+    size_t bufsz;
+    if (exact) {
+        bufsz = requestsz;
+    } else {
+        size_t blocks = requestsz / sizeof(size_t);
+        bufsz = (blocks + 4) * sizeof(size_t);
     }
 
-    return offset;
+    auto buf = std::make_unique<uint8_t[]>(bufsz);
+    if (!buf) {
+        s_log.error("{}: failed to resize buffer current: {x} desired: {x} final: {x}",
+                    m_socket.to_string(), state.m_bufsz, requestsz, bufsz);
+        return false;
+    }
+
+    if (state.m_buf)
+        memcpy(buf.get(), state.m_buf.get(), state.m_bufsz);
+    state.m_bufsz = bufsz;
+    state.m_buf = std::move(buf);
+    return true;
 }
 
-ssize_t theme::client_base::extract_elementcount(const net_field& sz_field, const net_field& buf_field,
-                                                 const uint8_t* buf) const
+std::tuple<bool, size_t, size_t> theme::client_base::calc_field_sz(const theme::net_struct* const ns,
+                                                                   size_t field,
+                                                                   const uint8_t* const buf) const
 {
-    ssize_t result = extract_integer(sz_field, buf);
+    bool known = true;
+    size_t alloc = 0;
+    size_t wire = 0;
+
+    THEME_ASSERTD(field < ns->m_size);
+    const net_field& cur_field = ns->m_fields[field];
+
+    switch (cur_field.m_type) {
+    case net_field::data_type::e_buffer:
+    case net_field::data_type::e_buffer_redundant:
+        // These fields MUST be the last one in the struct.
+        THEME_ASSERTD(field + 1 == ns->m_size);
+        // fall-through
+    case net_field::data_type::e_string_utf16:
+        THEME_ASSERTD(field > 0);
+        alloc += cur_field.m_elementsz * cur_field.m_count;
+        if (buf) {
+            const net_field& sz_field = ns->m_fields[field - 1];
+            wire += cur_field.m_elementsz * extract_elementcount(sz_field, cur_field, buf);
+        } else {
+            // Don't increment the wire size -- we don't know the size of this field, so it's
+            // better for the IO operation to complete and then for us to "double check" to
+            // ensure we are actually done. In the best case scenario, we have an empty buffer
+            // (eg pings) and the accurate size == the inaccurate size. Worst case, we have
+            // to resume reading the message multiple times (embedded strings).
+            known = false;
+        }
+        break;
+    default:
+        alloc += cur_field.m_elementsz * cur_field.m_count;
+        wire += cur_field.m_elementsz * cur_field.m_count;
+        break;
+    }
+
+    return std::make_tuple(known, alloc, wire);
+}
+
+size_t theme::client_base::extract_elementcount(const theme::net_field& sz_field,
+                                                const theme::net_field& buf_field,
+                                                const uint8_t* const buf) const
+{
+    // These assertions should never happen because the macros will build the protocol
+    // structures as we expect.
+    THEME_ASSERTD(sz_field.m_type == net_field::data_type::e_buffer_size);
+    THEME_ASSERTD(sz_field.m_count == 1);
+
+    const uint8_t* ptr = buf - sz_field.m_elementsz;
+    size_t result = extract_integer(sz_field, ptr);
 
     // Yikes - redundant buffers include the size of the size parameter in their size.
     // So, ugh, we have to compensate for that.
@@ -102,7 +157,7 @@ ssize_t theme::client_base::extract_elementcount(const net_field& sz_field, cons
     return result;
 }
 
-size_t theme::client_base::extract_integer(const theme::net_field& field, const uint8_t* buf) const
+size_t theme::client_base::extract_integer(const theme::net_field& field, const uint8_t* const buf) const
 {
     switch (field.m_elementsz) {
     case 1:
@@ -120,148 +175,269 @@ size_t theme::client_base::extract_integer(const theme::net_field& field, const 
     }
 }
 
-bool theme::client_base::resize_buf(size_t& currentsz, size_t desiredsz, uint8_t*& buf)
-{
-    if (currentsz >= desiredsz)
-        return true;
-
-    size_t blocks = desiredsz / sizeof(size_t);
-    size_t bufsz = (blocks + 4) * sizeof(size_t);
-
-    uint8_t* result = (uint8_t*)realloc((void*)buf, bufsz);
-    if (result) {
-        buf = result;
-        currentsz = bufsz;
-        return true;
-    } else {
-        s_log.error("failed to resize buffer current: {x} desired: {x}", currentsz, desiredsz);
-        return false;
-    }
-}
-
-void theme::client_base::debug_field(const theme::net_field& field, const uint8_t* buf) const
+void theme::client_base::debug_field(const theme::net_field& field, const uint8_t* const buf) const
 {
     switch (field.m_type) {
     case net_field::data_type::e_blob:
     case net_field::data_type::e_buffer:
     case net_field::data_type::e_buffer_redundant:
-        s_log.debug("{}: READ {} [BUFFER]", m_socket.to_string(), field.m_name);
+        s_log.debug("{}: FIELD {} [BUFFER]", m_socket.to_string(), field.m_name);
         break;
     case net_field::data_type::e_integer:
     case net_field::data_type::e_buffer_size:
-        s_log.debug("{}: READ {} [INT]: {}", m_socket.to_string(), field.m_name,
+        s_log.debug("{}: FIELD {} [INT]: {}", m_socket.to_string(), field.m_name,
                     extract_integer(field, buf));
         break;
     case net_field::data_type::e_string_utf16:
-        s_log.debug("{}: READ {} [STRING]: {}", m_socket.to_string(), field.m_name,
-            (char16_t*)buf);
+        s_log.debug("{}: FIELD {} [STRING]: {}", m_socket.to_string(), field.m_name,
+                   (char16_t*)buf);
         break;
     case net_field::data_type::e_uuid:
-        s_log.debug("{}: READ {} [UUID]: {}", m_socket.to_string(), field.m_name,
-            ((uuid*)buf)->as_string());
+        s_log.debug("{}: FIELD {} [UUID]: {}", m_socket.to_string(), field.m_name,
+                    ((uuid*)buf)->as_string());
         break;
     default:
-        s_log.debug("{}: READ {} [UNKNOWN]", m_socket.to_string(), field.m_name);
+        s_log.debug("{}: FIELD {} [UNKNOWN]", m_socket.to_string(), field.m_name);
         break;
     }
 }
 
 // =================================================================================
 
-bool theme::client_base::handle_read()
+bool theme::client_base::resume_read(io_state& state)
 {
-#ifdef CLIENT_PROTOCOL_DEBUG
-    s_log.debug("{}: BEGIN READ {}", m_socket.to_string(), m_read.m_struct->m_name);
+    do {
+        // How much have we read?
+        size_t memsz = 0;
+        size_t wiresz = 0;
+        for (size_t i = 0; i < state.m_read.m_field; ++i) {
+            auto result = calc_field_sz(state.m_read.m_struct, i, state.m_buf.get() + memsz);
+            THEME_ASSERTD(std::get<0>(result));
+            memsz += std::get<1>(result);
+            wiresz += std::get<2>(result);
+        }
+
+        // How much more do we need to read?
+        bool fixedsz = true;
+        size_t allocsz = memsz;
+        size_t readsz = 0;
+
+        for (size_t i = state.m_read.m_field; i < state.m_read.m_struct->m_size; ++i) {
+            // For the first field ONLY, it is safe to examine the read buffer. Past here, we have
+            // undefined/uninitialized data. Yikes.
+            const uint8_t* ptr = (i == state.m_read.m_field) ? state.m_buf.get() + memsz : nullptr;
+            auto sizes = calc_field_sz(state.m_read.m_struct, i, ptr);
+            if (std::get<2>(sizes) == (size_t)-1) {
+                // too large of a request...
+                m_socket.shutdown();
+                return false;
+            }
+            fixedsz &= std::get<0>(sizes);
+            allocsz += std::get<1>(sizes);
+
+            // If we are into a variable read, we can't read that yet. But, we do want to try to
+            // allocate close to the complete message, so keep counting.
+            if (fixedsz)
+                readsz += std::get<2>(sizes);
+        }
+
+        if (!alloc_buf(state, allocsz)) {
+            m_socket.shutdown();
+            return false;
+        }
+
+        readsz -= std::min(readsz, state.m_read.m_offset);
+        if (readsz > 0) {
+            // All this work just to get a buffer that might be on the stack... Sigh
+            std::unique_ptr<uint8_t[]> heapbuf;
+            uint8_t* buf;
+            if (readsz <= kMaxStackBufSize) {
+                buf = (uint8_t*)alloca(readsz);
+            } else {
+                heapbuf = std::make_unique<uint8_t[]>(readsz);
+                buf = heapbuf.get();
+            }
+
+            auto result = m_socket.read(readsz, buf);
+            if (!std::get<0>(result)) {
+                if (std::get<1>(result) == (size_t)-1)
+                    m_socket.shutdown();
+                return false;
+            }
+
+            // OK, we read something. Now, we need to iterate through the fields we had left to
+            // read and see how far along we got into that... Decrypting the data along the way,
+            // of course. *grumble, grumble*
+            size_t nread = std::get<1>(result);
+            size_t mempos = memsz;
+            size_t wirepos = 0;
+            do {
+                auto sizes = calc_field_sz(state.m_read.m_struct, state.m_read.m_field,
+                                           state.m_buf.get() + mempos);
+                THEME_ASSERTD(std::get<0>(sizes));
+                size_t field_memsz = std::get<1>(sizes);
+                size_t field_wiresz = std::get<2>(sizes);
+
+                // Add offset NOW so that we don't affect the above field inspection...
+                mempos += state.m_read.m_offset;
+
+                // Decrypt smaller of: field size on the wire or read amount remaining
+                int decsz;
+                size_t field_nread = std::min(field_wiresz, nread);
+                THEME_ASSERTD(EVP_DecryptUpdate(m_decrypt.get(),
+                                                state.m_buf.get() + mempos, &decsz,
+                                                buf + wirepos, field_nread) != 0);
+                THEME_ASSERTD(decsz == field_nread);
+#ifdef THEME_PROTOCOL_DEBUG
+                debug_field(state.m_read.m_struct->m_fields[state.m_read.m_field],
+                            state.m_buf.get() + mempos);
 #endif
 
-    // Size up to where we've read--we'll continue resizing the buff as we go.
-    size_t structsz = calc_offset(m_read.m_struct, m_read.m_field, m_read.m_buf);
-    if (!resize_buf(m_read.m_bufsz, structsz, m_read.m_buf)) {
-        s_log.error("{}: handle_read() nuking due to excessive memory at start in {}.{}",
-                    m_socket.to_string(), m_read.m_struct->m_name,
-                    m_read.m_struct->m_fields[m_read.m_field].m_name);
-        m_socket.shutdown();
+                nread -= field_nread;
+                wirepos += field_nread;
+
+                // Now, check to see if we left off in the middle of a field.
+                if (field_nread < field_wiresz) {
+                    state.m_read.m_offset += field_nread;
+                    THEME_ASSERTD(nread == 0);
+                    // break out of this processing loop and try to request more data. ideally we
+                    // will get EAGAIN and return to processing other clients -- there might be more
+                    // data available though, so we could keep going as well.
+                    break;
+                } else {
+                    // reset the offset to zero since we read a complete field f'sho
+                    state.m_read.m_field++;
+                    // if we read all the fields, we are done woo
+                    if (state.m_read.m_field == state.m_read.m_struct->m_size) {
+                        THEME_ASSERTD(nread == 0);
+                        return true;
+                    }
+                    state.m_read.m_offset = 0;
+                    mempos += field_memsz;
+                }
+            } while (true);
+        }
+    } while(true);
+}
+
+std::unique_ptr<uint8_t[]> theme::client_base::handle_read()
+{
+    bool complete;
+    if (!m_read.m_buf) {
+#ifdef THEME_PROTOCOL_DEBUG
+        s_log.debug("{}: BEGIN READ '{}'", m_socket.to_string(), m_read.m_read.m_struct->m_name);
+#endif
+
+        complete = resume_read(m_read);
+    } else {
+        complete = resume_read(m_read);
+    }
+
+    if (complete) {
+#ifdef THEME_PROTOCOL_DEBUG
+        s_log.debug("{}: END READ '{}'", m_socket.to_string(), m_read.m_read.m_struct->m_name);
+#endif
+
+        // Reset state
+        m_read.m_read.m_field = 0;
+        m_read.m_read.m_offset = 0;
+        m_read.m_read.m_struct = nullptr;
+
+        // Release the buffer to the higher level processor. Unless someone explicitly holds onto
+        // it, the buffer will be destroyed after processing completes.
+        return std::move(m_read.m_buf);
+    }
+
+    // prevents a warning
+    return std::unique_ptr<uint8_t[]>(nullptr);
+}
+
+// =================================================================================
+
+bool theme::client_base::resume_write(theme::client_base::io_state& state)
+{
+    // Due to encryption, this is a fairly "dumb" send
+    const uint8_t* ptr = state.m_buf.get() + state.m_write.m_bufoffs;
+    size_t sendsz = state.m_bufsz - state.m_write.m_bufoffs;
+
+    // TODO: sendfile()
+    auto result = m_socket.write(sendsz, ptr);
+    if (!std::get<0>(result)) {
+        // error
+        if (std::get<1>(result) == (size_t)-1)
+            m_socket.shutdown();
         return false;
     }
 
-    while (m_read.m_field < m_read.m_struct->m_size) {
-        const net_field& cur = m_read.m_struct->m_fields[m_read.m_field];
-        ssize_t sz;
+    // how much did we read?
+    state.m_write.m_bufoffs += std::get<1>(result);
+    return state.m_write.m_bufoffs == state.m_bufsz;
+}
 
-        // Handle variable sized fields
-        switch (cur.m_type) {
-        case net_field::data_type::e_buffer:
-        case net_field::data_type::e_buffer_redundant:
-        case net_field::data_type::e_string_utf16:
-        {
-            const net_field& size_field = m_read.m_struct->m_fields[m_read.m_field-1];
-            THEME_ASSERTD(size_field.m_count == 1);
-            ptrdiff_t diff = m_read.m_bufoffs - size_field.m_elementsz;
-            THEME_ASSERTD(diff > 0);
-            uint8_t* ptr = m_read.m_buf + diff;
-            sz = extract_elementcount(size_field, cur, ptr) * cur.m_elementsz;
-            break;
-        }
-        default:
-            sz = cur.m_count * cur.m_elementsz;
-            break;
-        }
-        sz -= m_read.m_defer;
+void theme::client_base::enqueue_write(const theme::net_struct* const ns, const uint8_t* const buf)
+{
+    io_state state;
 
-        // An illegal buffer size or just something bad happened...
-        if (sz < 0) {
-            s_log.warning("{}: handle_read() bad read size {} for field {}.{} -- the client may be flooding us",
-                            m_socket.to_string(), m_read.m_struct->m_name, cur.m_name);
-            m_socket.shutdown();
-            return false;
-        }
-
-        // Resize buff if needed
-        structsz += sz;
-        if (!resize_buf(m_read.m_bufsz, structsz, m_read.m_buf)) {
-            s_log.error("{}: handle_read() nuking due to excessive memory in {}.{}",
-                        m_socket.to_string(), m_read.m_struct->m_name, cur.m_name);
-            m_socket.shutdown();
-            return false;
-        }
-
-        ssize_t nread;
-        uint8_t* buf = m_read.m_buf + m_read.m_bufoffs + m_read.m_defer;
-        if (!m_socket.read(sz, buf, nread)) {
-            if (nread == -1) {
-                s_log.debug("{}: handle_read() remote went down during read?", m_socket.to_string());
-                m_socket.shutdown();
-                return false;
-            } else {
-                // we read something, but not the entire field, so we must defer.
-                m_read.m_defer += nread;
-                return false;
-            }
-        }
-
-#ifdef CLIENT_PROTOCOL_DEBUG
-        debug_field(cur, buf - m_read.m_defer);
-#endif
-
-        // Great, we successfully read this field.
-        m_read.m_defer = 0;
-        m_read.m_field++;
-        m_read.m_bufoffs += sz;
+    // Bad news old bean. While it would be nice to avoid copying, we need to send out an encrypted
+    // message. That means while we're writing we no longer have access to the decrypted contents.
+    // So, we'll instead perform userspace buffering here. At least the code is cleaner...
+    size_t wiresz = 0;
+    for (size_t i = 0; i < ns->m_size; ++i) {
+        auto result = calc_field_sz(ns, i, buf);
+        THEME_ASSERTD(std::get<0>(result));
+        wiresz += std::get<2>(result);
     }
 
-#ifdef CLIENT_PROTOCOL_DEBUG
-    s_log.debug("{}: END READ {}", m_socket.to_string(), m_read.m_struct->m_name);
+    if (!alloc_buf(state, wiresz, true)) {
+        m_socket.shutdown();
+        return;
+    }
+
+#ifdef THEME_PROTOCOL_DEBUG
+    s_log.debug("{}: ENQUEUE WRITE '{}' wiresz:{x}", m_socket.to_string(), ns->m_name,wiresz);
 #endif
 
-    // Reset for the next struct
-    m_read.m_struct = nullptr;
-    m_read.m_field = 0;
-    m_read.m_bufoffs = 0;
-    return true;
+    const uint8_t* mem_ptr = buf;
+    uint8_t* wire_ptr = state.m_buf.get();
+    for (size_t i = 0; i < ns->m_size; ++i) {
+        auto result = calc_field_sz(ns, i, buf);
+        THEME_ASSERTD(std::get<0>(result));
+
+        int encsz;
+        EVP_EncryptUpdate(m_encrypt.get(), wire_ptr, &encsz, mem_ptr, std::get<2>(result));
+        THEME_ASSERTD(encsz == std::get<2>(result));
+#ifdef THEME_PROTOCOL_DEBUG
+        debug_field(ns->m_fields[i], mem_ptr);
+#endif
+
+        mem_ptr += std::get<1>(result);
+        wire_ptr += std::get<2>(result);
+    }
+
+#ifdef THEME_PROTOCOL_DEBUG
+    s_log.debug("{}: END WRITE '{}'", m_socket.to_string(), ns->m_name);
+#endif
+
+    if (!has_pending_write()) {
+        if (resume_write(state)) {
+#ifdef THEME_PROTOCOL_DEBUG
+            s_log.debug("{}: WROTE '{}' SYNCHRONOUSLY", m_socket.to_string(), ns->m_name);
+#endif
+            return;
+        }
+    }
+    m_writes.emplace_back(std::move(state));
 }
 
-void theme::client_base::handle_write()
+bool theme::client_base::handle_write()
 {
-    // TODO
-}
+    if (m_writes.empty())
+        return false;
 
+    io_state& state = m_writes.front();
+    if (resume_write(state)) {
+        m_writes.pop_front();
+        return true;
+    }
+    return false;
+}

@@ -17,6 +17,8 @@
 #ifndef __THEME_CONFIG_H
 #define __THEME_CONFIG_H
 
+#cmakedefine THEME_ALLOW_DECRYPTED_CONNECTIONS
 #cmakedefine THEME_BIG_ENDIAN
+#cmakedefine THEME_PROTOCOL_DEBUG
 
 #endif

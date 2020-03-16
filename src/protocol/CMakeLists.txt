@@ -15,6 +15,7 @@
 
 set(THEME_PROTOCOL_HEADERS
     common.h
+    gatekeeper.h
     net_struct.h
 )
 
@@ -29,6 +30,7 @@ set(THEME_PROTOCOL_INLINES
 
 set(THEME_PROTOCOL_PROTOCOLS
     common.inl
+    gatekeeper.inl
 )
 
 set(THEME_PROTOCOL_SOURCES

@@ -26,8 +26,10 @@ find_package(OpenSSL REQUIRED)
 find_package(string_theory REQUIRED)
 
 # Compile time config
+option(THEME_ALLOW_DECRYPTED_CONNECTIONS OFF)
 include(TestBigEndian)
 TEST_BIG_ENDIAN(THEME_BIG_ENDIAN)
+option(THEME_PROTOCOL_DEBUG OFF)
 
 include_directories("${PROJECT_BINARY_DIR}/include")
 configure_file("${PROJECT_SOURCE_DIR}/src/theme_config.h.in" "${PROJECT_BINARY_DIR}/include/theme_config.h")

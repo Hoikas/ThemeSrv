@@ -18,7 +18,9 @@
 #define __IO_SOCKET_H
 
 #include <string_theory/string>
+#include <tuple>
 
+struct iovec;
 struct sockaddr;
 
 namespace theme
@@ -53,7 +55,8 @@ namespace theme
         bool listen(int backlog=10);
         bool accept(socket& client);
         bool shutdown();
-        bool read(size_t bufsz, void* buf, ssize_t& nread);
+        std::tuple<bool, size_t> read(size_t bufsz, uint8_t* const buf);
+        std::tuple<bool, size_t> write(size_t bufsz, const uint8_t* const buf);
 
         void setfd(int fd);
         void setfd(int fd, sockaddr* addr);

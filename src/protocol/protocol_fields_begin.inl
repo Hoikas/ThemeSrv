@@ -25,7 +25,7 @@
 
 #define THEME_NET_FIELD_BUFFER(name) \
     { theme::net_field::data_type::e_buffer_size, #name "sz", sizeof(uint32_t), 1 }, \
-    { theme::net_field::data_type::e_buffer, #name, 0, 0 },
+    { theme::net_field::data_type::e_buffer, #name, 1, 0 },
 
 #define THEME_NET_FIELD_BUFFER_REDUNDANT(name) \
     { theme::net_field::data_type::e_buffer_size, #name "sz", sizeof(uint32_t), 1 }, \

@@ -15,6 +15,7 @@
  */
 
 #include "uru_crypt.h"
+#include "../core/config_parser.h"
 #include "../core/errors.h"
 
 #include <openssl/bn.h>
@@ -22,6 +23,8 @@
 #include <openssl/rand.h>
 #include <memory>
 #include <string_theory/st_codecs.h>
+
+using namespace ST::literals;
 
 // ============================================================================
 
@@ -82,8 +85,10 @@ std::tuple<ST::string, ST::string, ST::string> theme::crypto::generate_keys(uint
 
         // Generate primes for public (N) and private (K/A) keys
         constexpr size_t key_bits = kKeySize * 8;
-        BN_generate_prime_ex(k, key_bits, 1, nullptr, nullptr, nullptr);
-        BN_generate_prime_ex(n, key_bits, 1, nullptr, nullptr, nullptr);
+        while (BN_num_bytes(k) != kKeySize)
+            BN_generate_prime_ex(k, key_bits, 1, nullptr, nullptr, nullptr);
+        while (BN_num_bytes(n) != kKeySize)
+            BN_generate_prime_ex(n, key_bits, 1, nullptr, nullptr, nullptr);
 
         // Compute the client key (N/KA)
         // X = g**K%N
@@ -99,4 +104,67 @@ std::tuple<ST::string, ST::string, ST::string> theme::crypto::generate_keys(uint
     return std::make_tuple(ST::base64_encode(k_key, sizeof(k_key)),
                            ST::base64_encode(n_key, sizeof(n_key)),
                            ST::base64_encode(x_key, sizeof(x_key)));
+}
+
+// ============================================================================
+
+BIGNUM* theme::crypto::load_key(const ST::string& key) const
+{
+    uint8_t key_bytes[64];
+    THEME_ASSERTD(ST::base64_decode(key, key_bytes, sizeof(key_bytes)) == sizeof(key_bytes));
+
+    BIGNUM* ret = BN_new();
+    BN_bin2bn(key_bytes, sizeof(key_bytes), ret);
+    return ret;
+}
+
+// ============================================================================
+
+std::tuple<bool, BIGNUM*, BIGNUM*> theme::crypto::load_keys(const theme::config_parser& config,
+                                                            const ST::string& section) const
+{
+    bool result = true;
+    BIGNUM* k;
+    BIGNUM* n;
+
+    do {
+        const ST::string& kstr = config.get<const ST::string&>(section, "crypt_k"_st);
+        const ST::string& nstr = config.get<const ST::string&>(section, "crypt_n"_st);
+        if (kstr.empty() || nstr.empty()) {;
+            generate_keys(config.get<unsigned int>(section, "crypt_g"_st));
+            result = false;
+            continue;
+        }
+
+        k = load_key(kstr);
+        n = load_key(nstr);
+        break;
+    } while(true);
+
+    return std::make_tuple(result, k, n);
+}
+
+// ============================================================================
+
+bool theme::crypto::make_server_key(BIGNUM* k, BIGNUM* n, size_t cli_seedsz,
+                                    const uint8_t* const y_data, size_t keysz,
+                                    uint8_t* srv_seed, uint8_t* key) const
+{
+    if (cli_seedsz < keysz)
+        return false;
+
+    uint8_t cli_seed[kKeySize];
+    {
+        auto ctx = begin_calculation();
+        BIGNUM* y = ctx.bignum();
+        BIGNUM* seed = ctx.bignum();
+
+        BN_lebin2bn(y_data, cli_seedsz, y);
+        BN_mod_exp(seed, y, k, n, ctx);
+        BN_bn2lebinpad(seed, cli_seed, sizeof(cli_seed));
+        RAND_bytes(srv_seed, keysz);
+    }
+    for (size_t i = 0; i < keysz; ++i)
+        key[i] = cli_seed[i] ^ srv_seed[i];
+    return true;
 }

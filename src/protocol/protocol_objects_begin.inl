@@ -25,7 +25,6 @@
 #define THEME_NET_FIELD_UINT8(name) ;
 #define THEME_NET_FIELD_UINT16(name) ;
 #define THEME_NET_FIELD_UINT32(name) ;
-#define THEME_NET_FIELD_STRING_UTF8(name, size) ;
 #define THEME_NET_FIELD_STRING_UTF16(name, size) ;
 #define THEME_NET_FIELD_UUID(name) ;
 #define THEME_NET_STRUCT_END(protocol_name, msg_name) ;

@@ -16,6 +16,7 @@
 
 #include "server.h"
 #include "client.h"
+#include "gatekeeper.h"
 
 #include "../core/errors.h"
 #include "../io/poll.h"
@@ -63,6 +64,9 @@ theme::server::server(const std::filesystem::path& config)
 {
     m_config.read(config);
 
+    // don't init servers until after the config is loaded, dummy.
+    m_gatekeeperSrv = std::make_unique<gatekeeper_daemon>(this);
+
     // dev
     m_log.set_level(log::level::e_debug);
 }
@@ -80,12 +84,12 @@ void theme::server::generate_client_ini(const std::filesystem::path& path) const
     stream.open(path, std::ios_base::out | std::ios_base::trunc);
 
     stream << "Server.Gate.G " << m_config.get<unsigned int>("gate", "crypt_g") << std::endl;
-    stream << "Server.Gate.N " << m_config.get<const ST::string&>("gate", "crypt_n") << std::endl;
-    stream << "Server.Gate.X " << m_config.get<const ST::string&>("gate", "crypt_x") << std::endl;
+    stream << "Server.Gate.N \"" << m_config.get<const ST::string&>("gate", "crypt_n") << '"' << std::endl;
+    stream << "Server.Gate.X \"" << m_config.get<const ST::string&>("gate", "crypt_x") << '"' << std::endl;
 
     const ST::string& bindaddr = m_config.get<const ST::string&>("lobby", "bindaddr");
     const ST::string& extaddr = m_config.get<const ST::string&>("lobby", "extaddr");
-    stream << "Server.Gate.Host " << (extaddr.empty() ? bindaddr : extaddr) << std::endl;
+    stream << "Server.Gate.Host \"" << (extaddr.empty() ? bindaddr : extaddr) << '"' << std::endl;
     stream << "Server.Port " << m_config.get<unsigned int>("lobby", "port") << std::endl;
 }
 
@@ -163,7 +167,7 @@ void theme::server::accept_cb(int fd, uint32_t events)
     socket sock;
     while (m_listenSock.accept(sock)) {
         m_log.debug("incoming connection from {}", sock.to_string());
-        auto& client = m_clients.emplace_back(std::move(sock), this);
+        auto& client = m_clients.emplace_back(sock, this);
         client.m_iterator = m_clients.end();
         // WTF?! No operator-, only operator--
         --client.m_iterator;

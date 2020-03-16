@@ -23,7 +23,7 @@
 
 #define THEME_NET_STRUCT_BEGIN(protocol_name, msg_name) \
     THEME_NET_STRUCT_BEGIN_COMMON(protocol_name, msg_name) \
-            static constexpr uint16_t id() { return protocol_name::e_##msg_name; }
+            static constexpr uint16_t id() { return ::theme::protocol::protocol_name::e_##msg_name; }
 
 #define THEME_NET_FIELD_BLOB(name, size) \
     uint8_t m_##name[size]; \
