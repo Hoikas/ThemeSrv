@@ -64,9 +64,6 @@ theme::server::server(const std::filesystem::path& config)
 {
     m_config.read(config);
 
-    // don't init servers until after the config is loaded, dummy.
-    m_gatekeeperSrv = std::make_unique<gatekeeper_daemon>(this);
-
     // dev
     m_log.set_level(log::level::e_debug);
 }
@@ -112,11 +109,9 @@ void theme::server::generate_daemon_keys()
 
 bool theme::server::run()
 {
-    // Ensure we have encryption keys available - otherwise very, very bad things will
-    // happen when we try to use them.
-    check_crypto();
-
     if (!init_fds())
+        return false;
+    if (!init_servers())
         return false;
 
     // Run until we are nuked by a signal
@@ -126,16 +121,6 @@ bool theme::server::run()
     } while(m_active);
 
     return true;
-}
-
-void theme::server::check_crypto()
-{
-    if (!m_config.get<const ST::string&>("gate", "crypt_k").empty() &&
-        !m_config.get<const ST::string&>("gate", "crypt_k").empty())
-        return;
-
-    m_log.error("Encryption not configured! Connections to GateKeeper will fail!");
-    generate_daemon_keys();
 }
 
 bool theme::server::init_fds()
@@ -172,4 +157,10 @@ void theme::server::accept_cb(int fd, uint32_t events)
         // WTF?! No operator-, only operator--
         --client.m_iterator;
     }
+}
+
+bool theme::server::init_servers()
+{
+    m_gatekeeperSrv = std::make_unique<gatekeeper_daemon>(this);
+    return true;
 }

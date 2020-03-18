@@ -76,8 +76,8 @@ namespace theme
         bool run();
 
     protected:
-        void check_crypto();
         bool init_fds();
+        bool init_servers();
 
         void accept_cb(int fd, uint32_t events);
     };

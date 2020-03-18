@@ -21,7 +21,6 @@
 #include <openssl/bn.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-#include <memory>
 #include <string_theory/st_codecs.h>
 
 using namespace ST::literals;
@@ -85,10 +84,8 @@ std::tuple<ST::string, ST::string, ST::string> theme::crypto::generate_keys(uint
 
         // Generate primes for public (N) and private (K/A) keys
         constexpr size_t key_bits = kKeySize * 8;
-        while (BN_num_bytes(k) != kKeySize)
-            BN_generate_prime_ex(k, key_bits, 1, nullptr, nullptr, nullptr);
-        while (BN_num_bytes(n) != kKeySize)
-            BN_generate_prime_ex(n, key_bits, 1, nullptr, nullptr, nullptr);
+        THEME_ASSERTD(BN_generate_prime_ex(k, key_bits, 1, nullptr, nullptr, nullptr) == 1);
+        THEME_ASSERTD(BN_generate_prime_ex(n, key_bits, 1, nullptr, nullptr, nullptr) == 1);
 
         // Compute the client key (N/KA)
         // X = g**K%N
@@ -127,19 +124,15 @@ std::tuple<bool, BIGNUM*, BIGNUM*> theme::crypto::load_keys(const theme::config_
     BIGNUM* k;
     BIGNUM* n;
 
-    do {
-        const ST::string& kstr = config.get<const ST::string&>(section, "crypt_k"_st);
-        const ST::string& nstr = config.get<const ST::string&>(section, "crypt_n"_st);
-        if (kstr.empty() || nstr.empty()) {;
-            generate_keys(config.get<unsigned int>(section, "crypt_g"_st));
-            result = false;
-            continue;
-        }
-
-        k = load_key(kstr);
-        n = load_key(nstr);
-        break;
-    } while(true);
+    ST::string kstr = config.get<const ST::string&>(section, "crypt_k"_st);
+    ST::string nstr = config.get<const ST::string&>(section, "crypt_n"_st);
+    if (kstr.empty() || nstr.empty()) {
+        ST::string xstr;
+        std::tie(kstr, nstr, xstr) = generate_keys(config.get<unsigned int>(section, "crypt_g"_st));
+        result = false;
+    }
+    k = load_key(kstr);
+    n = load_key(nstr);
 
     return std::make_tuple(result, k, n);
 }
