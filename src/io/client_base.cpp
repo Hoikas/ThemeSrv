@@ -194,7 +194,7 @@ void theme::client_base::debug_field(const theme::net_field& field, const uint8_
         break;
     case net_field::data_type::e_uuid:
         s_log.debug("{}: FIELD {} [UUID]: {}", m_socket.to_string(), field.m_name,
-                    ((uuid*)buf)->as_string());
+                    uuid::from_le_bytes(buf).as_string());
         break;
     default:
         s_log.debug("{}: FIELD {} [UNKNOWN]", m_socket.to_string(), field.m_name);

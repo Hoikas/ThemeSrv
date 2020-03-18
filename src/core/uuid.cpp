@@ -23,6 +23,11 @@
 
 theme::uuid theme::uuid::null{};
 
+theme::uuid::uuid(const uint8_t* const buf)
+{
+    memcpy(m_data, buf, sizeof(m_data));
+}
+
 theme::uuid theme::uuid::generate()
 {
     uuid_t data;
@@ -31,6 +36,16 @@ theme::uuid theme::uuid::generate()
 }
 
 // =================================================================================
+
+void theme::uuid::to_le_bytes(uint8_t* buf) const
+{
+    uuid_le* guid = (uuid_le*)buf;
+    uuid_le* src = (uuid_le*)m_data;
+    guid->m_data1 = __builtin_bswap32(src->m_data1);
+    guid->m_data2 = __builtin_bswap16(src->m_data2);
+    guid->m_data3 = __builtin_bswap16(src->m_data3);
+    memcpy(guid->m_data4, src->m_data4, sizeof(guid->m_data4));
+}
 
 ST::string theme::uuid::as_string() const
 {

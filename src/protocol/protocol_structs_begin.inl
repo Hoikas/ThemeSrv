@@ -83,8 +83,8 @@
 
 #define THEME_NET_FIELD_UUID(name) \
     uint8_t m_##name[16]; \
-    const theme::uuid* get_##name() const { return (const theme::uuid*)m_##name; } \
-    theme::uuid* get_##name() { return (theme::uuid*)m_##name; }
+    theme::uuid get_##name() const { return theme::uuid::from_le(m_##name); } \
+    void set_##name(const theme::uuid& value) { value.to_le(m_##name); }
 
 #define THEME_NET_STRUCT_END(protocol_name, msg_name) \
     }; }; };
